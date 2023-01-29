@@ -46,6 +46,7 @@
 //@HEADER
 
 #include "Peridigm_ModelEvaluator.hpp"
+#include "Peridigm_Timer.hpp"
 
 PeridigmNS::ModelEvaluator::ModelEvaluator(){
 }
@@ -60,7 +61,7 @@ PeridigmNS::ModelEvaluator::evalModel(Teuchos::RCP<Workset> workset) const
   std::vector<PeridigmNS::Block>::iterator blockIt;
 
   // ---- Evaluate Damage ---
-
+  PeridigmNS::Timer::self().startTimer("Evaluate Damage");
   for(blockIt = workset->blocks->begin() ; blockIt != workset->blocks->end() ; blockIt++){
 
     Teuchos::RCP<const PeridigmNS::DamageModel> damageModel = blockIt->getDamageModel();
@@ -77,9 +78,9 @@ PeridigmNS::ModelEvaluator::evalModel(Teuchos::RCP<Workset> workset) const
                                  *dataManager);
     }
   }
-
+  PeridigmNS::Timer::self().stopTimer("Evaluate Damage");
   // ---- Evaluate Precompute ----
-
+  PeridigmNS::Timer::self().startTimer("Evaluate Precompute");
   for(blockIt = workset->blocks->begin() ; blockIt != workset->blocks->end() ; blockIt++){
 
     Teuchos::RCP<PeridigmNS::NeighborhoodData> neighborhoodData = blockIt->getNeighborhoodData();
@@ -95,13 +96,13 @@ PeridigmNS::ModelEvaluator::evalModel(Teuchos::RCP<Workset> workset) const
                               neighborhoodList,
                               *dataManager);
   }
-
+  PeridigmNS::Timer::self().stopTimer("Evaluate Precompute");
   // ---- Synchronize data computed in precompute ----
-
+  PeridigmNS::Timer::self().startTimer("Synchronize data computed in precompute");
   PeridigmNS::DataManagerSynchronizer::self().synchronizeDataAfterPrecompute(workset->blocks);
-
+  PeridigmNS::Timer::self().stopTimer("Synchronize data computed in precompute");
   // ---- Evaluate Internal Force ----
-
+  PeridigmNS::Timer::self().startTimer("Evaluate Internal Force");
   for(blockIt = workset->blocks->begin() ; blockIt != workset->blocks->end() ; blockIt++){
 
     Teuchos::RCP<PeridigmNS::NeighborhoodData> neighborhoodData = blockIt->getNeighborhoodData();
@@ -123,11 +124,13 @@ PeridigmNS::ModelEvaluator::evalModel(Teuchos::RCP<Workset> workset) const
                                          neighborhoodList,
                                          *dataManager);
   }
-
+  PeridigmNS::Timer::self().stopTimer("Evaluate Internal Force");
   // ---- Evaluate Contact ----
-
+  
+  PeridigmNS::Timer::self().startTimer("Evaluate Contact");
   if(!workset->contactManager.is_null())
     workset->contactManager->evaluateContactForce(dt);
+  PeridigmNS::Timer::self().stopTimer("Evaluate Contact");
 }
 
 void

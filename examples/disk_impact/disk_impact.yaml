@@ -70,7 +70,7 @@ Peridigm:
 
   Solver:
       Initial Time: 0.0
-      Final Time: 0.0008
+      Final Time: 0.00005
       Verlet:
           Safety Factor: 0.7
 

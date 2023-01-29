@@ -56,6 +56,8 @@
 #include <Teuchos_SerialSymDenseMatrix.hpp>
 #include <Teuchos_SerialSpdDenseSolver.hpp>
 
+#include "Peridigm_Timer.hpp"
+
 namespace CORRESPONDENCE {
 
 template<typename ScalarT>
@@ -1984,6 +1986,7 @@ void computeBondLevelVelocityGradient
     int numPoints
 )
 {
+
   const ScalarT* coord = coordinates;
   const ScalarT* neighborCoord;
   const ScalarT* vel = velocities;
@@ -2087,6 +2090,7 @@ void computeBondLevelVelocityGradient
       bondLevelVelGradZX += numNeighbors; bondLevelVelGradZY += numNeighbors; bondLevelVelGradZZ += numNeighbors;
     }
   }
+  PeridigmNS::Timer::self().stopTimer(__FUNCTION__);
 }
 
 //This function updates the node-level deformation gradient based on velocity gradient
