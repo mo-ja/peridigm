@@ -110,6 +110,7 @@ PeridigmNS::Peridigm::Peridigm(const MPI_Comm& comm,
     analysisHasContact(false),
     analysisHasDataLoader(false),
     analysisHasMultiphysics(false),
+    analysisHasReadRestart(false),
     computeIntersections(false),
     constructInterfaces(false),
     blockIdFieldId(-1),
@@ -982,6 +983,7 @@ void PeridigmNS::Peridigm::InitializeRestart() {
       restart_directory_namePtr=&*writable.begin();
       setRestartNames(restart_directory_namePtr);
       readRestart(firstSolver);
+      analysisHasReadRestart = true;
       if(peridigmComm->MyPID() == 0){
         cout <<"Restart is initialized." << endl;
         cout.flush();
@@ -1382,41 +1384,45 @@ void PeridigmNS::Peridigm::executeExplicit(Teuchos::RCP<Teuchos::ParameterList> 
     PeridigmNS::Timer::self().stopTimer("Data Loader");
   }
 
-  // \todo The velocity copied into the DataManager is actually the midstep velocity, not the NP1 velocity; this can be fixed by creating a midstep velocity field in the DataManager and setting the NP1 value as invalid.
+  // Evaluate the initial step only if it does not read it from restart files
+  if(!analysisHasReadRestart){
+    // \todo The velocity copied into the DataManager is actually the midstep velocity, not the NP1 velocity; this can be fixed by creating a midstep velocity field in the DataManager and setting the NP1 value as invalid.
 
-  // Evaluate internal force and contact force in initial configuration for use in first timestep
-  PeridigmNS::Timer::self().startTimer("Internal Force");
-  modelEvaluator->evalModel(workset);
-  PeridigmNS::Timer::self().stopTimer("Internal Force");
+    // Evaluate internal force and contact force in initial configuration for use in first timestep
+    PeridigmNS::Timer::self().startTimer("Internal Force");
+    modelEvaluator->evalModel(workset);
+    PeridigmNS::Timer::self().stopTimer("Internal Force");
 
-  // Copy force from the data manager to the mothership vector
-  PeridigmNS::Timer::self().startTimer("Gather/Scatter");
-  force->PutScalar(0.0);
-  for(blockIt = blocks->begin() ; blockIt != blocks->end() ; blockIt++){
-    scratch->PutScalar(0.0);
-    blockIt->exportData(scratch, forceDensityFieldId, PeridigmField::STEP_NP1, Add);
-    force->Update(1.0, *scratch, 1.0);
+    // Copy force from the data manager to the mothership vector
+    PeridigmNS::Timer::self().startTimer("Gather/Scatter");
+    force->PutScalar(0.0);
+    for(blockIt = blocks->begin() ; blockIt != blocks->end() ; blockIt++){
+      scratch->PutScalar(0.0);
+      blockIt->exportData(scratch, forceDensityFieldId, PeridigmField::STEP_NP1, Add);
+      force->Update(1.0, *scratch, 1.0);
+    }
+    if(analysisHasContact){
+      contactManager->exportData(contactForce);
+      force->Update(1.0, *contactForce, 1.0);
+    }
+    PeridigmNS::Timer::self().stopTimer("Gather/Scatter");
+
+    // Apply BC at time zero
+    PeridigmNS::Timer::self().startTimer("Apply Kinematic B.C.");
+    boundaryAndInitialConditionManager->applyBoundaryConditions(timeCurrent,timePrevious);
+    PeridigmNS::Timer::self().stopTimer("Apply Kinematic B.C.");
+    PeridigmNS::Timer::self().startTimer("Apply Body Forces");
+    boundaryAndInitialConditionManager->applyForceContributions(timeCurrent,timePrevious);
+    PeridigmNS::Timer::self().stopTimer("Apply Body Forces");
+
+    // fill the acceleration vector
+    (*a) = (*force);
+    for(int i=0 ; i<a->MyLength() ; ++i){
+      (*a)[i] += (*externalForce)[i];
+      (*a)[i] /= (*density)[i/3];
+    }
   }
-  if(analysisHasContact){
-    contactManager->exportData(contactForce);
-    force->Update(1.0, *contactForce, 1.0);
-  }
-  PeridigmNS::Timer::self().stopTimer("Gather/Scatter");
 
-  // Apply BC at time zero
-  PeridigmNS::Timer::self().startTimer("Apply Kinematic B.C.");
-  boundaryAndInitialConditionManager->applyBoundaryConditions(timeCurrent,timePrevious);
-  PeridigmNS::Timer::self().stopTimer("Apply Kinematic B.C.");
-  PeridigmNS::Timer::self().startTimer("Apply Body Forces");
-  boundaryAndInitialConditionManager->applyForceContributions(timeCurrent,timePrevious);
-  PeridigmNS::Timer::self().stopTimer("Apply Body Forces");
-
-  // fill the acceleration vector
-  (*a) = (*force);
-  for(int i=0 ; i<a->MyLength() ; ++i){
-    (*a)[i] += (*externalForce)[i];
-    (*a)[i] /= (*density)[i/3];
-  }
   // Write initial configuration to disk
   PeridigmNS::Timer::self().startTimer("Output");
   synchDataManagers();
@@ -1975,11 +1981,18 @@ void PeridigmNS::Peridigm::executeNOXQuasiStatic(Teuchos::RCP<Teuchos::Parameter
   if(analysisHasMultiphysics)
     noxPressureVAtDOFWithKinematicBC = Teuchos::rcp(new Epetra_Vector(fluidPressureV->Map()));
 
-  // Initialize velocity to zero
-  v->PutScalar(0.0);
-  if(analysisHasMultiphysics){
-    unknownsV->PutScalar(0.0);
-    fluidPressureV->PutScalar(0.0);
+  // By default initialize velocity to zero.
+  // If this solver was preceded by another (restart or several solvers in the same input file) we have the velocities
+  // that we can use as predictor values, so - if the user asks - don't zero them out.
+  const bool initPredictorFromPreviousSolver{solverParams->get<bool>("Initialize Predictor From Previous Solver", false)};
+  if (!initPredictorFromPreviousSolver)
+  {
+    v->PutScalar(0.0);
+    if(analysisHasMultiphysics)
+    {
+      unknownsV->PutScalar(0.0);
+      fluidPressureV->PutScalar(0.0);
+    }
   }
 
   // Pointers into mothership vectors
@@ -2126,8 +2139,8 @@ void PeridigmNS::Peridigm::executeNOXQuasiStatic(Teuchos::RCP<Teuchos::Parameter
 
     v->PutScalar(0.0); 
     if(analysisHasMultiphysics){
-      unknownsV->PutScalar(0.0);
-      fluidPressureV->PutScalar(0.0);
+    	unknownsV->PutScalar(0.0);
+			fluidPressureV->PutScalar(0.0);
     }
 
     boundaryAndInitialConditionManager->applyKinematicBC_InsertZeros(initialGuess);
@@ -2480,6 +2493,16 @@ void PeridigmNS::Peridigm::executeQuasiStatic(Teuchos::RCP<Teuchos::ParameterLis
   else
     predictor = Teuchos::rcp(new Epetra_Vector(v->Map()));
 
+  // By default initialize velocity to zero.
+  // If this solver was preceded by another (restart or several solvers in the same input file) we have the velocities
+  // that we can use as predictor values, so - if the user asks - don't zero them out.
+  const bool initPredictorFromPreviousSolver{solverParams->get<bool>("Initialize Predictor From Previous Solver", false)};
+  if (initPredictorFromPreviousSolver) 
+  {
+    for(int i=0 ; i<lhs->MyLength() ; ++i)
+      (*predictor)[i] = (*v)[i];
+  }
+
   bool solverVerbose = solverParams->get("Verbose", false);
   Teuchos::RCP<Teuchos::ParameterList> quasiStaticParams = sublist(solverParams, "QuasiStatic", true);
   int maxSolverIterations = quasiStaticParams->get("Maximum Solver Iterations", 10);
@@ -2738,7 +2761,7 @@ void PeridigmNS::Peridigm::executeQuasiStatic(Teuchos::RCP<Teuchos::ParameterLis
       }
 
       // On the first iteration, use a predictor based on the velocity from the previous load step
-      if(solverIteration == 1 && step > 1 && !disableHeuristics) {
+      if(solverIteration == 1 && (step > 1 || initPredictorFromPreviousSolver) && !disableHeuristics) {
         for(int i=0 ; i<lhs->MyLength() ; ++i)
           (*lhs)[i] = (*predictor)[i]*timeIncrement;
         boundaryAndInitialConditionManager->applyKinematicBC_InsertZeros(lhs);

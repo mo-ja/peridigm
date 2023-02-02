@@ -1,4 +1,7 @@
-add_subdirectory(ShellBondFilter)
+if(HAVE_YAML)
+  add_subdirectory(ShellBondFilter)
+  add_subdirectory(ElasticBondBased)
+endif(HAVE_YAML)
 add_subdirectory(InitialDamage)
 add_subdirectory(LinearLPSBar)
 add_subdirectory(NeighborhoodVolume)
@@ -29,9 +32,11 @@ add_subdirectory(ViscoplasticNeedlemanFullyPrescribedTension_NoFlaw)
 add_subdirectory(ElasticPlasticCorrespondenceFullyPrescribedTension)
 add_subdirectory(ElasticCorrespondenceFullyPrescribedTension)
 add_subdirectory(ElasticHypoelasticCorrespondenceFullyPrescribedTension)
+add_subdirectory(ElasticBondAssociatedCorrespondenceFullyPrescribedTension)
 add_subdirectory(SimpleImplicitDiffusion)
 add_subdirectory(DiffusionImprovedQuadrature)
 add_subdirectory(InterfaceAwareDamageModel)
+add_subdirectory(PredictorFromPreviousSolver)
 
 add_custom_target( vtest
    COMMAND ctest
